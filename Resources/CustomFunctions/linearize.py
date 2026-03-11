@@ -1,6 +1,8 @@
 import os
 import numbers
 import tempfile
+import shutil
+from pathlib import Path
 
 import pandas
 import numpy as np
@@ -45,24 +47,45 @@ def signature():
                 "type": "Boolean",
                 "description": "Linearized model statistics are printed in the log, "
                 "if this option is set to True",
-                "defaultValue": True,
+                "defaultValue": False,
             },
         ],
     }
 
 
 class LinearizeModel:
-    def __init__(self, fmu):
+    def __init__(self, fmu, options):
         self._fmu = fmu
+        self.options = options
 
     def set(self, key, value):
         self._fmu.set(key, value)
 
     def solve_at_time(self, t_linearize):
         if t_linearize == 0:
+            
             self._fmu.initialize()
+
         else:
-            self._fmu.simulate(final_time=t_linearize)
+
+            options = self.options
+
+            sim_opts = self._fmu.simulate_options()
+
+            sim_opts['solver'] = options.get('simulationOptions', {}).get('solver', sim_opts.get('solver'))
+
+            solver = sim_opts.get('solver')
+            solver_options_key = f"{solver}_options"
+            solver_options = sim_opts.get(solver_options_key, {})
+            user_solver_options = options.get('solverOptions', {})
+
+            # Update solver_options with any matching keys from user_solver_options
+            for key in solver_options.keys():
+                if key in user_solver_options:
+                    solver_options[key] = user_solver_options[key]
+            sim_opts[solver_options_key] = solver_options
+
+            self._fmu.simulate(final_time=t_linearize, options=sim_opts)
 
     def get_state_space_representation(self, use_structure_info: bool):
         return self._fmu.get_state_space_representation(
@@ -83,6 +106,17 @@ class LinearizeModel:
 
     def get_derivatives(self):
         return list(self._fmu.get_derivatives())
+    
+    def get_name(self):
+        return self._fmu.get_name()
+
+    @property
+    def options(self):
+        return self._options
+
+    @options.setter
+    def options(self, value):
+        self._options = value        
 
 
 def run(
@@ -92,6 +126,7 @@ def run(
     upload_custom_artifact,
     t_linearize,
     print_to_log,
+    options
 ):
     """
     The run function, defining the operation or computation of the custom function.
@@ -122,7 +157,8 @@ def run(
     # In this case, the linearization is packaged into a separate function. This
     # enables to use it outside of Modelon Impact and thereby also makes
     # it convenient to test.
-    model = LinearizeModel(get_fmu())
+    
+    model = LinearizeModel(get_fmu(), options)
     return linearize(
         model,
         environment,
@@ -252,6 +288,16 @@ def linearize(
     temp_mat_file = os.path.join(temp_dir, "result.mat")
     scipy.io.savemat(temp_mat_file, ss)
 
+    # Move the .mat file to the directory that can be accessed locally for
+    # manipulation directly in a Jupyter notebook. The file is saved in a folder 
+    # named after the model, to avoid name clashes in case the linearization
+    # custom function is applied on multiple models in the same experiment.   
+    name = model.get_name()
+    resdir = os.path.join(Path.home(), "results", name)
+    respath= os.path.join(resdir, "result.mat")
+    Path(resdir).mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(temp_mat_file, respath)
+
     # Now upload the result to the server as a custom artifact
     artifact_id = "ABCD"
     artifact_route = upload_custom_artifact(artifact_id, temp_mat_file)
@@ -259,4 +305,5 @@ def linearize(
     # Finally print the route where the artifact can be accessed
     print('Stored artifact with ID: {}'.format(artifact_id))
     print('')
+    print('The local path to the artifact is: {}'.format(respath))
     print('Artifact can be downloaded from @artifact[here]({})'.format(artifact_route))
