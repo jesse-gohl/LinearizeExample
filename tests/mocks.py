@@ -10,6 +10,7 @@ class LinearizeModelMock:
         self.ss_matrix = (N.array([]), N.array([]), N.array([]), N.array([]))
         self.variable_data = {}
         self.solved_at_time_called = None
+        self.options = {}
 
     def set(self, key, value):
         pass
@@ -34,3 +35,14 @@ class LinearizeModelMock:
 
     def get_derivatives(self):
         return self.derivative_values
+
+    def get_name(self):
+        return "LinearizeModelMock"
+
+    @property
+    def options(self):
+        return self._options
+
+    @options.setter
+    def options(self, value):
+        self._options = value        
